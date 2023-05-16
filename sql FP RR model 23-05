@@ -1,0 +1,335 @@
+DROP TABLE IF EXISTS ca_playground.fp_rr_model2;
+--
+CREATE TABLE ca_playground.fp_rr_model2
+WITH 
+(
+  format='PARQUET'
+) 	
+AS
+
+WITH campaign_data AS (
+SELECT 
+  validated_company_number AS company_number
+, letter_sent_date 
+, freq
+, ROW_NUMBER () OVER (PARTITION BY validated_company_number ORDER BY letter_sent_date) AS letters_sent_ranking
+
+FROM direct_mail_production.campaign_history ch
+
+WHERE is_active = TRUE -- this filter must always be applied when using this table!
+  AND trim(product) = 'FP' -- to filter only FP letters
+  AND comms_code LIKE '1%' -- to filter only Prospect letters
+ )
+ 
+ , outcome_variable AS  ( 
+ SELECT 
+  mult.*
+  , attr.channel_head
+FROM reporting_multiproduct.master_application_table  mult
+LEFT JOIN reporting_marketing_production.flexipay_attribution attr 
+ ON attr.application_uuid = mult.application_uuid
+WHERE 
+attr.channel_head = 'Direct Marketing' 
+AND channel_category = 'Direct Mail' 
+AND mult.application_product = 'Line of Credit' 
+AND COALESCE(mult.sales_channel, 'Direct') = 'Direct' 
+AND mult.borrower_type_product = 'New' 
+AND mult.application_type = 'Primary'
+)
+
+
+, base_table AS (
+SELECT 
+ mc.* 
+ , CASE WHEN date_diff('day', letter_sent_date , su_timestamp ) <= 28 THEN 1 ELSE 0 END AS response_flag
+ , letter_sent_date - INTERVAL '1' MONTH AS month_before_letter
+ , outc.su_timestamp
+ FROM 
+ campaign_data mc
+ 
+ LEFT JOIN 
+ outcome_variable outc
+ ON mc.company_number = outc.company_number
+  
+ WHERE (outc.su_timestamp >= mc.letter_sent_date OR su_timestamp IS NULL ) -- Exclude letters that have been sent after SU date
+  )
+
+
+,demographics AS (
+ SELECT 
+  cro 
+, company_age_months 
+, has_parent_company
+, growth_score -- growth_score_bin 
+, num_employees --num_employees_bin
+, num_sites  --num_sites_bin 
+, comm_mos_group_monuments
+, comm_mos_group_specialist_supp
+, comm_mos_group_solid_rocks
+, comm_mos_group_hotels_catering
+, comm_mos_group_health_social
+, comm_mos_group_property
+, comm_mos_group_entrepreneur_indp
+, mos_group_fleets_finances
+, mos_group_major_retail
+, mos_group_indust_bluechip
+, mos_group_national_service
+, comm_mos_group_energentic
+, delphi_band_a_dead
+, delphi_band_b_serious_adverse_information
+, delphi_band_c_maximum_risk
+, delphi_band_d_high_risk
+, delphi_band_e_above_average_risk
+, delphi_band_f_below_average_risk
+, delphi_band_g_low_risk 
+, delphi_band_h_very_low_risk
+, fs_insolvency_highly_likely
+, fs_insolvency_likely
+, fss_insolvency_medium
+, fs_insolvency_unlikely
+, fs_insolvency_highly_unlikely
+, life_stage_micro_usually_small
+, life_stage_micro_often_large
+, life_stage_micro_medium 
+, life_stage_lifestyle_subsistence
+, life_stage_established_young_growth
+, life_stage_established_stable_gentle
+, life_stage_established_older
+, life_stage_established_old_stable
+, life_stage_early_grower
+, life_stage_established_declining
+, CASE WHEN comm_mos_group_monuments = 1 			THEN '1'
+	   WHEN comm_mos_group_specialist_supp  = 1 	THEN '2'
+	   WHEN comm_mos_group_solid_rocks  = 1 		THEN '3' 
+	   WHEN comm_mos_group_hotels_catering  = 1 	THEN '4'
+	   WHEN comm_mos_group_health_social   = 1  	THEN '5'
+	   WHEN comm_mos_group_property   = 1 			THEN '6'
+	   WHEN comm_mos_group_entrepreneur_indp   = 1 	THEN '7'
+	   WHEN mos_group_fleets_finances   = 1 		THEN '8'
+	   WHEN mos_group_major_retail   = 1 			THEN '9'
+	   WHEN mos_group_indust_bluechip  = 1 			THEN '10'
+	   WHEN mos_group_national_service   = 1 		THEN '11'
+	   WHEN comm_mos_group_energentic  = 1 			THEN '12'
+	   ELSE NULL END AS moss_group
+, CASE WHEN delphi_band_a_dead = 1 		 		  		  THEN '1'
+	   WHEN delphi_band_b_serious_adverse_information = 1 THEN '2'
+	   WHEN delphi_band_c_maximum_risk = 1 		  		  THEN '3'
+	   WHEN delphi_band_d_high_risk   = 1 		  		  THEN '4'
+	   WHEN delphi_band_e_above_average_risk = 1  		  THEN '5'
+	   WHEN delphi_band_f_below_average_risk  = 1 		  THEN '6'
+	   WHEN delphi_band_g_low_risk  = 1 		  		  THEN '7'
+	   WHEN delphi_band_h_very_low_risk  = 1 	  		  THEN '8'
+	   ELSE NULL END AS delphi_band_bin
+, CASE WHEN fs_insolvency_highly_likely = 1 THEN '1'
+ 	   WHEN fs_insolvency_likely = 1		THEN '2'
+ 	   WHEN fss_insolvency_medium = 1	    THEN '3'
+ 	   WHEN fs_insolvency_unlikely = 1 		THEN '4'
+ 	   WHEN fs_insolvency_highly_unlikely=1 THEN '5'
+ 	   ELSE NULL 
+ 	   END AS fss_bin
+, CASE WHEN life_stage_micro_usually_small = 1 THEN 1 
+	   WHEN life_stage_micro_often_large   = 1 THEN 2 
+	   WHEN life_stage_micro_medium 	   = 1 THEN 3 
+	   ELSE 0 END AS life_stage_micro_bin
+, CASE WHEN life_stage_lifestyle_subsistence = 1 	  THEN 1
+	   WHEN life_stage_established_young_growth  = 1  THEN 2
+	   WHEN life_stage_established_stable_gentle  = 1 THEN 3
+	   WHEN life_stage_established_older  = 1 		  THEN 4
+	   WHEN life_stage_established_old_stable  = 1 	  THEN 5
+	   WHEN life_stage_early_grower  = 1 			  THEN 6
+	   WHEN life_stage_established_declining  = 1 	  THEN 7
+	   ELSE 0 END AS life_stage_bin   
+, growth_score_bin
+, turnover_bin
+, num_employees_bin
+, trading_both 
+, trading_import 
+, trading_export 
+, num_directors 
+, num_directors_male 
+, num_directors_female 
+, num_directors_uk 
+, num_directors_non_uk 
+, avg_director_lifespan 
+, num_shareholders 
+, num_company_shareholders 
+, num_personal_shareholders 
+, num_deceased_shareholders 
+, num_personal_shareholders_proportion_12m
+, num_personal_shareholders_proportion_24m
+, num_company_shareholders_proportion_12m
+, num_company_shareholders_proportion_24m
+, num_deceased_shareholders_proportion_12m
+, num_deceased_shareholders_proportion_24m
+, num_directors_male_proportion_12m
+, num_directors_male_proportion_24m
+, num_directors_female_proportion_12m
+, num_directors_female_proportion_24m
+, num_directors_uk_proportion_12m
+, num_directors_uk_proportion_24m
+, num_directors_non_uk_proportion_12m
+, num_directors_non_uk_proportion_24m
+, avg_sharheolder_lifespan 
+, turnover 
+, turnover_per_employee 
+, turnover_per_employee_12m
+, turnover_per_employee_24m
+, num_directors_female_proportion
+, num_directors_male_proportion
+, num_directors_uk_proportion 
+, num_directors_non_uk_proportion 
+, turnover_12m 
+, turnover_24m 
+, try_cast(date_parse("received_date", '%Y%m%d') AS date) AS received_date
+
+FROM "com_layer4_modelling"."l4_mrkt_demographics" 
+
+WHERE 
+dead_flag = 0 AND turnover > 20000 
+)
+
+
+, overall_dem AS ( 
+SELECT 
+* 
+, ROW_NUMBER () OVER (PARTITION BY cro, letter_sent_date  ORDER BY received_date asc ) AS latest_dem
+FROM base_table base
+LEFT JOIN 
+ demographics dem 
+ ON base.company_number = dem.cro 
+ AND date_diff('day', dem.received_date , letter_sent_date) >=25
+ AND date_diff('day', dem.received_Date , letter_sent_date) < 60
+)
+
+, overall_fin AS ( 
+SELECT 
+fin.*
+, base.letter_sent_date
+, ROW_NUMBER () OVER (PARTITION BY cro, letter_sent_date  ORDER BY try_cast(date_parse("received_date", '%Y%m%d') AS date) asc ) AS latest_fin
+
+FROM base_table base
+ 
+LEFT JOIN 
+  "com_layer4_modelling"."l4_mrkt_financials" fin 
+  ON base.company_number = fin.cro 
+  AND date_diff('day', try_cast(date_parse("received_date", '%Y%m%d') AS date) , letter_sent_date) >=25
+  AND date_diff('day', try_cast(date_parse("received_date", '%Y%m%d') AS date) , letter_sent_date) < 60
+ 
+WHERE assets_current_total > 250
+)
+
+
+
+, final_table AS (
+SELECT 
+response_flag 
+, fin.*
+, company_age_months 
+, has_parent_company
+, comm_mos_group_monuments
+, comm_mos_group_specialist_supp
+, comm_mos_group_solid_rocks
+, comm_mos_group_hotels_catering
+, comm_mos_group_health_social
+, comm_mos_group_property
+, comm_mos_group_entrepreneur_indp
+, mos_group_fleets_finances
+, mos_group_major_retail
+, mos_group_indust_bluechip
+, mos_group_national_service
+, comm_mos_group_energentic
+, delphi_band_a_dead
+, delphi_band_b_serious_adverse_information
+, delphi_band_c_maximum_risk
+, delphi_band_d_high_risk
+, delphi_band_e_above_average_risk
+, delphi_band_f_below_average_risk
+, delphi_band_g_low_risk 
+, delphi_band_h_very_low_risk
+, fs_insolvency_highly_likely
+, fs_insolvency_likely
+, fss_insolvency_medium
+, fs_insolvency_unlikely
+, fs_insolvency_highly_unlikely
+, life_stage_micro_usually_small
+, life_stage_micro_often_large
+, life_stage_micro_medium 
+, life_stage_lifestyle_subsistence
+, life_stage_established_young_growth
+, life_stage_established_stable_gentle
+, life_stage_established_older
+, life_stage_established_old_stable
+, life_stage_early_grower
+, life_stage_established_declining
+, growth_score -- growth_score_bin 
+, num_employees --num_employees_bin
+, num_sites  --num_sites_bin 
+, moss_group
+, delphi_band_bin
+, fss_bin
+, life_stage_micro_bin
+, life_stage_bin   
+, growth_score_bin
+, turnover_bin
+, num_employees_bin
+, trading_both 
+, trading_import 
+, trading_export 
+, num_directors 
+, num_directors_male 
+, num_directors_female 
+, num_directors_uk 
+, num_directors_non_uk 
+, avg_director_lifespan 
+, num_shareholders 
+, num_company_shareholders 
+, num_personal_shareholders 
+, num_deceased_shareholders 
+, num_personal_shareholders_proportion_12m
+, num_personal_shareholders_proportion_24m
+, num_company_shareholders_proportion_12m
+, num_company_shareholders_proportion_24m
+, num_deceased_shareholders_proportion_12m
+, num_deceased_shareholders_proportion_24m
+, num_directors_male_proportion_12m
+, num_directors_male_proportion_24m
+, num_directors_female_proportion_12m
+, num_directors_female_proportion_24m
+, num_directors_uk_proportion_12m
+, num_directors_uk_proportion_24m
+, num_directors_non_uk_proportion_12m
+, num_directors_non_uk_proportion_24m
+, avg_sharheolder_lifespan 
+, turnover_per_employee 
+, turnover_per_employee_12m
+, turnover_per_employee_24m
+, num_directors_female_proportion
+, num_directors_male_proportion
+, num_directors_uk_proportion 
+, num_directors_non_uk_proportion 
+, turnover_12m 
+, turnover_24m 
+, ROW_NUMBER () OVER (PARTITION BY dem.cro ORDER BY  dem.letter_sent_date desc) AS latest_letter_date
+
+FROM overall_dem dem
+
+INNER JOIN overall_fin fin
+ON fin.cro = dem.cro
+AND fin.letter_sent_date = dem.letter_sent_date 
+AND latest_fin = 1 
+
+WHERE latest_dem = 1
+
+ORDER BY received_date
+)
+
+SELECT 
+*
+FROM final_table
+WHERE  latest_letter_date = 1
+ORDER BY 1;
+
+
+
+
+ 
