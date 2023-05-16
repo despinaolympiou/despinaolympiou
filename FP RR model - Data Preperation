@@ -1,0 +1,315 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[104]:
+
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import sklearn
+from sklearn import datasets
+from sklearn.feature_selection import VarianceThreshold
+from sklearn.datasets import load_iris
+from sklearn.feature_selection import f_classif, chi2, mutual_info_classif
+from statsmodels.stats.multicomp import pairwise_tukeyhsd
+from sklearn.feature_selection import SelectKBest
+from sklearn.feature_selection import RFE
+from sklearn.linear_model import LogisticRegression
+from sklearn.datasets import make_classification
+# from statsmodels.stats.outliers_influence import variance_inflation_factor
+from sklearn.model_selection import train_test_split
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn import metrics
+from sklearn import svm
+
+
+# In[105]:
+
+
+import imblearn
+from imblearn.over_sampling import RandomOverSampler
+from imblearn.over_sampling import SMOTE
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import f1_score, accuracy_score, confusion_matrix
+from sklearn.model_selection import GridSearchCV, StratifiedKFold
+from statsmodels.stats.weightstats import ztest
+
+
+# In[106]:
+
+
+df = pd.read_csv('model_data2', low_memory = False)
+df['response_flag'].value_counts()
+
+
+# In[107]:
+
+
+df.shape
+
+
+# In[108]:
+
+
+pd.set_option('display.max_columns', 1000)
+
+
+# # Clean data
+
+# In[109]:
+
+
+#Drop columns that are not relevant to the SME population - Prospects
+df   = df.drop(columns = ['ph_co','cro','received_date','letter_sent_date','latest_fin','latest_letter_date'])
+
+
+# In[110]:
+
+
+df.shape
+
+
+# In[111]:
+
+
+# flag_cols2 = [col for col in df if col.startswith('mos_')] or [col for col in df if col.startswith('comm_mos')] or [col for col in df if col.startswith('null_')] or [col for col in df if col.startswith('delphi_band_')] or [col for col in df if col.startswith('fs')] or [col for col in df if col.startswith('life_stage')] or ['dead_flag','has_parent_company','tradinf_both','trading_import','trading_export']
+
+
+# In[112]:
+
+
+# flag_cols2
+
+
+# # Scale data
+
+# In[113]:
+
+
+# If value missing, fill null columns with 1.
+flag_cols = [col for col in df if col.startswith('null_')]
+
+len(flag_cols)
+
+
+# In[114]:
+
+
+non_flag_cols = df.drop(axis =1, columns = flag_cols)
+
+
+# In[115]:
+
+
+df[flag_cols] = df[flag_cols].fillna(value=0)
+
+
+# In[116]:
+
+
+#Delete columns who are always 0 (have no value)
+
+x = []
+obj2 = df.max()
+for key,value in obj2.items():
+    if value == 0:
+        x.append(key)
+df = df.drop(columns = x)
+
+df = df.fillna(value=0)
+
+
+# In[117]:
+
+
+x
+
+
+# In[118]:
+
+
+#Removed empty columns
+print("Removed {} variables".format(len(x)))
+
+
+# In[119]:
+
+
+df.shape
+
+
+# In[120]:
+
+
+non_flag_cols = df.drop(axis =1, columns = flag_cols)
+
+
+# In[121]:
+
+
+# non_flag_cols = df.drop(flag_cols, axis =1)
+# print(non_flag_cols)
+
+
+# In[122]:
+
+
+response0 = non_flag_cols2.loc[non_flag_cols2['response_flag'] == 0]
+response1 = non_flag_cols2.loc[non_flag_cols2['response_flag'] == 1]
+
+
+# In[123]:
+
+
+import seaborn as sns
+sns.set_style("white")
+
+
+# In[124]:
+
+
+#Plots for both responses
+
+# kwargs = dict(hist_kws={'alpha':.6}, kde_kws={'linewidth':2})
+# for col in non_flag_cols.columns: 
+#     sns.distplot(response0[col],hist = False,color="dodgerblue", label="Compact", **kwargs)
+#     sns.distplot(response1[col],hist = False,color="deeppink", label="minivan", **kwargs)
+# #     response0[col].plot.hist()
+# #     response1[col].plot.hist()
+#     plt.title(col)
+#     plt.savefig(col, format="png", bbox_inches="tight")
+#     plt.show()
+
+
+# In[125]:
+
+
+#Plots for response = 1
+
+# kwargs = dict(hist_kws={'alpha':.6}, kde_kws={'linewidth':2})
+# for col in non_flag_cols.columns: 
+#     sns.distplot(response1[col],hist = False,color="deeppink", label="minivan", **kwargs)
+#     plt.title(col)
+#     plt.show()
+
+
+# In[126]:
+
+
+#Plots for response = 0
+
+# kwargs = dict(hist_kws={'alpha':.6}, kde_kws={'linewidth':2})
+# for col in non_flag_cols.columns: 
+#     sns.distplot(response0[col],hist = False,color="dodgerblue", label="minivan", **kwargs)
+#     plt.title(col)
+#     plt.show()
+
+
+# In[127]:
+
+
+scaler = MinMaxScaler()
+
+normalized_data = pd.DataFrame(scaler.fit_transform(non_flag_cols), index = df.index, columns=non_flag_cols.columns)
+
+
+# In[128]:
+
+
+df.shape
+
+
+# In[129]:
+
+
+df = pd.concat ([normalized_data, df[flag_cols]],axis =1)
+
+
+# In[130]:
+
+
+df.shape
+
+
+# In[131]:
+
+
+df['response_flag']
+
+
+# # Z selection
+
+# In[132]:
+
+
+df['response_flag'].dtypes
+
+
+# In[133]:
+
+
+data_group0 = df.loc[df['response_flag'] == 0]
+data_group1 = df.loc[df['response_flag'] == 1]
+
+
+# In[134]:
+
+
+good = []
+
+p_threshold = 0.2
+
+for col in df.columns:
+    if ztest(data_group0[col], data_group1[col])[1] < p_threshold:
+        good.append(col)
+        print(col)
+
+
+# In[135]:
+
+
+good
+print("Removed {} variables".format(df.shape[1] - len(good)))
+
+
+# In[136]:
+
+
+good.append('turnover_bin')
+
+
+# In[137]:
+
+
+df= df[good]
+
+
+# In[138]:
+
+
+df.shape
+
+
+# In[139]:
+
+
+df
+
+
+# In[140]:
+
+
+df.to_csv('rr_basic_features.csv')
+
+
+
+df.shape
+
+
+# In[ ]:
+
+
+
+
